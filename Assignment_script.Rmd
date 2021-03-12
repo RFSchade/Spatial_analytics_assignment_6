@@ -1,0 +1,114 @@
+---
+title: "Spatial Analytics Assignment 6: Finding patterns in burial mounds"
+author: "Rebecca Folmer Schade"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction 
+
+For this assignment, I have chosen task 2:   
+
+*prepare a worked example of either the quadrat test, G or K function applied to the Kazanlak burial mounds shapefile. The shapefile - Kaz_mounds.shp - is the same you used in W5 homework, and is now also in W6/data folder. Remember that you will need to convert the sf object into a ppp object. You can use as.ppp() function in the sf library. Explain briefly the results: **what trends do these different functions reveal in the mound data points?** *
+
+## Solution
+
+### Loading packages
+
+```{r}
+pacman::p_load(pacman, sf, raster, tidyverse, spatstat, maptools)
+```
+
+### Loading data
+
+```{r}
+# KAZ_mounds.shp - for the geometry of the mounds
+kaz_mounds <- st_read("data/KAZ_mounds.shp")
+# KAZ_surveyarea.shp - for the geometry of the surveyed area  
+kaz_surveyarea <- st_read("data/KAZ_surveyarea.shp")
+```
+
+### Converting to ppp
+
+```{r}
+# Plotting kaz_mounds against kaz_surveyarea to see if I can use that geometry for the widow
+plot(st_geometry(kaz_surveyarea));plot(st_geometry(kaz_mounds), pch = 19, col = "firebrick", add = TRUE)
+# > There are some mounds outside the surveyed area, so I am not sure if using that as a window is optimal. 
+# I will create a convex hull and use that instead.
+
+# Converting points to a single multi-point
+multi_mounds <- st_union(kaz_mounds)
+# Confirming that it worked
+length(kaz_mounds) 
+length(multi_mounds)
+# > The length went from 6 to 1, so I consider that a success
+
+# Computing the convex hull 
+mounds_hull <- st_convex_hull(multi_mounds)
+
+# Ploting the points together with the hull
+plot(mounds_hull, col = "red"); plot(st_geometry(kaz_mounds), add = TRUE)
+
+# Turning kaz_mounds into a ppp object
+mounds_pre_p <- as.ppp(kaz_mounds)
+
+# Turning the convex hull into a window
+mounds_window <- as.owin(mounds_hull)
+
+# Adding the window to the ppp object 
+mounds_p <-ppp(mounds_pre_p$x, mounds_pre_p$y, window=mounds_window)
+
+# plotting a square window against the convex hull widow to compare.
+plot(mounds_pre_p);plot(mounds_p)
+
+```
+The window was successfully defined as a convex hull.
+
+### Running quadrat test
+As mounds belonging to members of the same family are often clustered together, it makes most theoretical sense to test the mounds with a clustered distribution as an alternative hypothesis. 
+
+```{r}
+# Running the quadrant test
+qt <- quadrat.test(mounds_p, alternative = "clustered")
+
+# Inspect the results
+plot(qt)
+print(qt)
+```
+The test is significant at p < 0.05. This, coupled with the high X2 value, indicates that the null hypothesis (i.e. that the mounds are randomly distributed) is wrong and that the alternative hypothesis (i.e. that the mounds are clustered) is true.  
+
+### Applying G function 
+
+```{r}
+# Estimating G(r) with the correction argument as "border" for edge correction.  
+mounds_g <- Gest(mounds_p, correction = "border")
+
+# Plotting G(r) vs. r
+plot(mounds_g)
+```
+The black line (which shows the G score at the distance r) deviates quite a bit from the green line (the expected g scores in a random poisson distribution), which showa that the distribution of mounds is quite different from a random one. A G(r) is cumulative probability, the steep slope at the smaller distances of the chart indicates that the probability of finding a nearest neighbor to the mounds close-by is higher than finding it farther away.  
+
+### Applying K function 
+
+```{r}
+# Estimating the K-function with the correction argument as "border" for edge correction.  
+mounds_k <- Kest(mounds_p, correction = "border")
+
+# Plotting the K-function
+plot(mounds_k)
+
+# Computing envelopes of K 
+k_env <- envelope(mounds_p, Kest, correction = "border")
+
+# Plotting the K-function with the envelope and the ". - pi * r ^ 2 ~ r" formula to center the funtion of the expected K-function for a random poisson distribution for easier comparison. 
+plot(k_env, . - pi * r ^ 2 ~ r)
+```
+The black line of the K-function (which represents the number of mounds within distance r, scaled by intensity) indicates that the mounds in this dataset are ususally close to each-other, rather than far away from each other. That the deviance from the red line (which represents the exprected K-function for a random poisson distribution) goes outside the envelope (represented by the grey area) indicates that these deviances are prevelant enough that they could not be attributed to statistical noise. 
+
+## Conclutions
+
+Given that the results of all three test (quadrat test, G-function, and K-function) seem to confirm each other, as well as the theoretical assumption detail pre-testing, it is likely that the burial mounds in this dataset are, indeed, clustered. 
